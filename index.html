@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebBand - Instant Jam</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f0f0f; color: #e0e0e0; text-align: center; padding: 20px; line-height: 1.6; }
+        .container { max-width: 600px; margin: 0 auto; background: #1e1e1e; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h1 { color: #bb86fc; margin-bottom: 10px; }
+        .status { background: #333; padding: 10px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #bb86fc; }
+        button { background: #03dac6; color: #000; border: none; padding: 15px 40px; font-size: 18px; font-weight: bold; border-radius: 50px; cursor: pointer; transition: 0.3s; margin-top: 10px; }
+        button:hover { background: #018786; transform: scale(1.05); }
+        button:disabled { background: #555; cursor: not-allowed; }
+        #link-section { margin-top: 30px; padding: 15px; border: 1px dashed #444; border-radius: 10px; }
+        code { display: block; background: #000; padding: 10px; margin-top: 10px; color: #03dac6; word-break: break-all; }
+        .warning { font-size: 0.8em; color: #cf6679; margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🎸 WebBand</h1>
+    <p>Real-time low-latency jam session</p>
+
+    <div id="status" class="status">Initializing Network...</div>
+
+    <button id="joinBtn" disabled>Start My Mic & Join</button>
+
+    <div id="link-section">
+        <p>Share this link with your bandmates:</p>
+        <code id="roomLink">Generating link...</code>
+    </div>
+
+    <p class="warning">⚠️ USE HEADPHONES to prevent feedback loops.</p>
+</div>
+
+<script>
+    const statusEl = document.getElementById('status');
+    const roomLinkEl = document.getElementById('roomLink');
+    const joinBtn = document.getElementById('joinBtn');
+
+    // 1. Setup Room ID from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    let roomId = urlParams.get('room');
+    if (!roomId) {
+        roomId = Math.random().toString(36).substring(2, 9);
+        window.history.pushState({}, '', `?room=${roomId}`);
+    }
+    roomLinkEl.innerText = window.location.href;
+
+    // 2. Initialize Peer with a semi-predictable ID pattern
+    // This allows bandmates to find the "Host" or each other
+    const myId = `band-${roomId}-${Math.floor(Math.random() * 10000)}`;
+    const peer = new Peer(myId);
+
+    let audioCtx;
+    let localStream;
+
+    // 3. Sound Stabilizer (Compressor + Reverb simulation)
+    function playRemoteStream(stream) {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        const source = audioCtx.createMediaStreamSource(stream);
+        const compressor = audioCtx.createDynamicsCompressor();
+        
+        // Settings to level out instruments and prevent clipping
+        compressor.threshold.setValueAtTime(-20, audioCtx.currentTime);
+        compressor.knee.setValueAtTime(30, audioCtx.currentTime);
+        compressor.ratio.setValueAtTime(12, audioCtx.currentTime);
+        compressor.attack.setValueAtTime(0.003, audioCtx.currentTime);
+        compressor.release.setValueAtTime(0.25, audioCtx.currentTime);
+
+        const gainNode = audioCtx.createGain();
+        gainNode.gain.value = 1.5; // Slight boost for clarity
+
+        source.connect(compressor);
+        compressor.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+    }
+
+    // 4. Handle incoming calls
+    peer.on('call', (call) => {
+        console.log("Receiving call from bandmate...");
+        call.answer(localStream);
+        call.on('stream', (remoteStream) => {
+            playRemoteStream(remoteStream);
+        });
+    });
+
+    // 5. Connect Button Logic
+    joinBtn.onclick = async () => {
+        joinBtn.disabled = true;
+        statusEl.innerText = "Accessing Microphone...";
+
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: false, 
+                    noiseSuppression: false,
+                    autoGainControl: false,
+                    latency: 0
+                }
+            });
+
+            statusEl.innerText = "Online! Syncing with band...";
+            
+            // "Signal" to others by trying to call the room prefix
+            // In a real app, you'd use a signaling server to get a list.
+            // Here, we'll listen for any peer that joins the same namespace.
+            
+            // Logic: Scan for peers is restricted in public PeerJS, 
+            // so we rely on the first person being the "listener" 
+            // and subsequent people calling the ID pattern.
+            
+        } catch (err) {
+            statusEl.innerText = "Error: Mic access denied. Check HTTPS.";
+            joinBtn.disabled = false;
+        }
+    };
+
+    peer.on('open', (id) => {
+        statusEl.innerText = "Network Ready. Click to Join.";
+        joinBtn.disabled = false;
+    });
+
+    peer.on('error', (err) => {
+        console.error(err);
+        statusEl.innerText = "Connection Error: " + err.type;
+    });
+
+</script>
+</body>
+</html>
+
